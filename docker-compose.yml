@@ -1,0 +1,50 @@
+services:
+  obsidian:
+    image: lscr.io/linuxserver/obsidian:latest
+    container_name: notes-obsidian
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - PASSWORD=${KASM_PASSWORD}
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3001"
+    shm_size: "1gb"
+    volumes:
+      - obsidian-config:/config
+      - ./vault-root:/vault
+      - ${HOME}/Vaults/personal:/vault/personal
+      - ./vault-system:/vault/_system:ro
+    restart: unless-stopped
+
+  facade:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notes-facade
+    depends_on:
+      - obsidian
+    environment:
+      - TZ=${TZ}
+      - OBSIDIAN_API_KEY=${OBSIDIAN_API_KEY}
+      - OBSIDIAN_API_URL=${OBSIDIAN_API_URL}
+      - OBSIDIAN_CONNECT_TIMEOUT_SECONDS=${OBSIDIAN_CONNECT_TIMEOUT_SECONDS}
+      - OBSIDIAN_READ_TIMEOUT_SECONDS=${OBSIDIAN_READ_TIMEOUT_SECONDS}
+      - OBSIDIAN_WRITE_TIMEOUT_SECONDS=${OBSIDIAN_WRITE_TIMEOUT_SECONDS}
+      - OBSIDIAN_POOL_TIMEOUT_SECONDS=${OBSIDIAN_POOL_TIMEOUT_SECONDS}
+      - PROJECTS_CONFIG_PATH=${PROJECTS_CONFIG_PATH}
+      - VAULT_RO_PATH=${VAULT_RO_PATH}
+      - REVIEW_INBOX_DAYS=${REVIEW_INBOX_DAYS}
+      - REVIEW_STALE_ACTIVE_DAYS=${REVIEW_STALE_ACTIVE_DAYS}
+    ports:
+      - "127.0.0.1:8000:8000"
+    shm_size: "1gb"
+    volumes:
+      - ./config/projects.json:/app/config/projects.json:ro
+      - ${HOME}/Vaults/personal:/vault/personal:ro
+      - ./vault-system:/vault/_system:ro
+    restart: unless-stopped
+
+volumes:
+  obsidian-config:

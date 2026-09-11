@@ -160,6 +160,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# NotesFacade local runtime files
+config/projects.json
+vault-root/
+
 # Spyder project settings
 .spyderproject
 .spyproject

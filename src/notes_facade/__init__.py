@@ -1,0 +1,1 @@
+"""Notes facade package."""

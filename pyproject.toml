@@ -1,0 +1,39 @@
+[tool.poetry]
+name = "notes-facade"
+version = "0.1.0"
+description = "MCP facade over Obsidian Local REST API"
+authors = ["NotesFacade Team"]
+readme = "README.md"
+packages = [{ include = "notes_facade", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastmcp = "*"
+httpx = "*"
+pydantic = "^2.0.0"
+pydantic-settings = "*"
+python-frontmatter = "*"
+uvicorn = { version = "*", extras = ["standard"] }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+pytest-asyncio = "*"
+respx = "*"
+ruff = "*"
+mypy = "*"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"
