@@ -17,7 +17,14 @@ logs:
 
 new-project:
 	@echo "New project_id:"
-	@.venv/bin/python -c "import uuid; print(uuid.uuid4())"
+	@if [ -r /proc/sys/kernel/random/uuid ]; then \
+		cat /proc/sys/kernel/random/uuid; \
+	elif command -v uuidgen >/dev/null 2>&1; then \
+		uuidgen; \
+	else \
+		echo "Cannot generate UUID: /proc UUID source and uuidgen are unavailable." >&2; \
+		exit 1; \
+	fi
 	@echo
 	@echo "For additional projects, add matching read-write/read-only mounts as documented in README.md."
 	@echo "Add config entry to config/projects.json:"

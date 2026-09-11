@@ -8,7 +8,7 @@ services:
       - PGID=${PGID}
       - TZ=${TZ}
       - PASSWORD=${KASM_PASSWORD}
-      - OBSIDIAN_VAULT_ID=${OBSIDIAN_VAULT_ID}
+      - OBSIDIAN_VAULT_ID=${OBSIDIAN_VAULT_ID:-0000000000000000}
     ports:
       - "127.0.0.1:${OBSIDIAN_HTTP_HOST_PORT:-3000}:3000"
       - "127.0.0.1:${OBSIDIAN_HTTPS_HOST_PORT:-3001}:3001"
@@ -16,7 +16,7 @@ services:
     volumes:
       - obsidian-config:/config
       - ./vault-root:/vault
-      - ${PROJECT_VAULT_PATH:?PROJECT_VAULT_PATH must be set}:/vault/${PROJECT_FOLDER:?PROJECT_FOLDER must be set}
+      - ${PROJECT_VAULT_PATH:-${HOME}/Vaults/personal}:/vault/${PROJECT_FOLDER:-personal}
       - ./vault-system:/vault/_system:ro
       - ./docker/obsidian-init/10-seed-vault.sh:/custom-cont-init.d/10-seed-vault.sh:ro
       - ./docker/obsidian-init/enable-community-plugin.py:/opt/bootstrap/enable-community-plugin.py:ro
@@ -49,7 +49,7 @@ services:
     shm_size: "1gb"
     volumes:
       - ./config/projects.json:/app/config/projects.json:ro
-      - ${PROJECT_VAULT_PATH:?PROJECT_VAULT_PATH must be set}:/vault/${PROJECT_FOLDER:?PROJECT_FOLDER must be set}:ro
+      - ${PROJECT_VAULT_PATH:-${HOME}/Vaults/personal}:/vault/${PROJECT_FOLDER:-personal}:ro
       - ./vault-system:/vault/_system:ro
     restart: unless-stopped
 

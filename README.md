@@ -117,6 +117,8 @@ make check-runtime
 ```
 
 Она не запускает контейнеры и не меняет конфиги или заметки.
+Для legacy `.env` отсутствующие bootstrap-переменные подставляются только в памяти и
+не записываются в файл.
 
 Успешный первый запуск печатает URL UI, логин `abc`, путь vault, `project_id`, MCP
 endpoint и команды управления. Пароль и API key повторно не печатаются.
@@ -146,6 +148,12 @@ plugin `data.json` несовместим с обязательными пара
 
 Bootstrap никогда не выполняет `docker compose down -v`, не удаляет vault или volume и
 не читает и не меняет `.cursor/mcp.json`.
+
+Для установок, созданных до появления bootstrap, Compose сохраняет совместимые
+значения по умолчанию: `$HOME/Vaults/personal`, folder `personal` и несекретный
+валидный fallback id записи vault. Поэтому `docker compose config` работает до
+миграции; при запуске bootstrap реальные значения генерируются и фиксируются в
+`.env`. Сам bootstrap по-прежнему принимает только абсолютный `PROJECT_VAULT_PATH`.
 
 ## Подключение Cursor и других MCP-клиентов
 
@@ -213,7 +221,8 @@ make check-runtime
 
 Bootstrap создаёт ровно один начальный проект. Для дополнительного проекта:
 
-1. создайте отдельный каталог на хосте и UUID (`make new-project`);
+1. создайте отдельный каталог на хосте и UUID (`make new-project` использует
+   `/proc/sys/kernel/random/uuid`, с fallback на системный `uuidgen`, без Python);
 2. добавьте запись `{id, name, folder}` в `config/projects.json`;
 3. добавьте одинаковый bind mount в оба сервиса `docker-compose.yml`: RW для Obsidian
    и RO для facade;

@@ -494,7 +494,7 @@ repair_vault_ownership() {
             break
         fi
     done
-    [[ "${needs_repair}" == true ]] || return
+    [[ "${needs_repair}" == true ]] || return 0
 
     log "Repairing mismatched ownership inside vault-root and the selected project vault."
     for path in "${paths[@]}"; do
@@ -534,8 +534,9 @@ download_plugin_assets() {
 
 prepare_vault() {
     CURRENT_STAGE="headless Obsidian configuration"
-    mkdir -p -- "${REPO_ROOT}/vault-root/.obsidian/plugins/${PLUGIN_ID}" \
-        "${PROJECT_VAULT_PATH}"
+    mkdir -p -- "${REPO_ROOT}/vault-root" "${PROJECT_VAULT_PATH}"
+    repair_vault_ownership
+    mkdir -p -- "${REPO_ROOT}/vault-root/.obsidian/plugins/${PLUGIN_ID}"
     ensure_json_array_member "${REPO_ROOT}/vault-root/.obsidian/community-plugins.json" \
         "${PLUGIN_ID}"
     ensure_core_plugins_config "${REPO_ROOT}/vault-root/.obsidian/core-plugins.json"
@@ -565,7 +566,6 @@ EOF
             die "Existing plugin data.json is incompatible; preserved without exposing or overwriting it."
     fi
     download_plugin_assets
-    repair_vault_ownership
 }
 
 compose() {
@@ -608,7 +608,8 @@ run_runtime_checks() {
             die "Container service '${service}' is not running."
     done
     wait_for_health
-    compose exec -T facade python /app/scripts/check_runtime.py --project-id "${PROJECT_ID}"
+    compose exec -T facade python - --project-id "${PROJECT_ID}" \
+        <"${REPO_ROOT}/scripts/check_runtime.py"
 }
 
 bootstrap() {
@@ -675,6 +676,8 @@ check_only() {
     ensure_docker_access
     [[ -f "${ENV_FILE}" ]] || die ".env is missing; run bootstrap first."
     load_env_file
+    OBSIDIAN_VAULT_ID="${OBSIDIAN_VAULT_ID:-0000000000000000}"
+    populate_missing_env_defaults
     validate_loaded_configuration
     PROJECT_ID="$(read_project_id)" || die "Cannot read project_id from config/projects.json."
     run_runtime_checks
