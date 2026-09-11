@@ -1,4 +1,10 @@
-.PHONY: up down logs new-project test lint typecheck
+.PHONY: bootstrap check-runtime up down logs new-project test lint typecheck
+
+bootstrap:
+	./scripts/bootstrap.sh
+
+check-runtime:
+	./scripts/bootstrap.sh --check-runtime
 
 up:
 	docker compose up -d --build
@@ -11,10 +17,9 @@ logs:
 
 new-project:
 	@echo "New project_id:"
-	@python3 -c "import uuid; print(uuid.uuid4())"
+	@.venv/bin/python -c "import uuid; print(uuid.uuid4())"
 	@echo
-	@echo "Add mount to docker-compose.yml:"
-	@echo "  \$$HOME/Vaults/<project-folder>:/vault/<project-folder>"
+	@echo "For additional projects, add matching read-write/read-only mounts as documented in README.md."
 	@echo "Add config entry to config/projects.json:"
 	@echo "  {\"id\":\"<uuid4>\",\"name\":\"<project-name>\",\"folder\":\"<project-folder>\"}"
 

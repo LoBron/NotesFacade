@@ -163,6 +163,8 @@ venv.bak/
 # NotesFacade local runtime files
 config/projects.json
 vault-root/
+.env.bootstrap.*
+config/.bootstrap.*
 
 # Spyder project settings
 .spyderproject

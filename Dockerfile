@@ -22,6 +22,7 @@ COPY pyproject.toml poetry.lock README.md ./
 RUN poetry install --only main --no-root
 
 COPY src ./src
+COPY scripts/check_runtime.py ./scripts/check_runtime.py
 
 RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid app --create-home --shell /usr/sbin/nologin app \

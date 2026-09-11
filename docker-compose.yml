@@ -1,28 +1,32 @@
+name: ${COMPOSE_PROJECT_NAME:-notesfacade}
+
 services:
   obsidian:
-    image: lscr.io/linuxserver/obsidian:latest
-    container_name: notes-obsidian
+    image: lscr.io/linuxserver/obsidian:v1.13.7-ls144
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
       - PASSWORD=${KASM_PASSWORD}
+      - OBSIDIAN_VAULT_ID=${OBSIDIAN_VAULT_ID}
     ports:
-      - "127.0.0.1:3000:3000"
-      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:${OBSIDIAN_HTTP_HOST_PORT:-3000}:3000"
+      - "127.0.0.1:${OBSIDIAN_HTTPS_HOST_PORT:-3001}:3001"
     shm_size: "1gb"
     volumes:
       - obsidian-config:/config
       - ./vault-root:/vault
-      - ${HOME}/Vaults/personal:/vault/personal
+      - ${PROJECT_VAULT_PATH:?PROJECT_VAULT_PATH must be set}:/vault/${PROJECT_FOLDER:?PROJECT_FOLDER must be set}
       - ./vault-system:/vault/_system:ro
+      - ./docker/obsidian-init/10-seed-vault.sh:/custom-cont-init.d/10-seed-vault.sh:ro
+      - ./docker/obsidian-init/enable-community-plugin.py:/opt/bootstrap/enable-community-plugin.py:ro
     restart: unless-stopped
 
   facade:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: notes-facade
+    user: "${PUID}:${PGID}"
     depends_on:
       - obsidian
     environment:
@@ -41,11 +45,11 @@ services:
       - REVIEW_INBOX_DAYS=${REVIEW_INBOX_DAYS}
       - REVIEW_STALE_ACTIVE_DAYS=${REVIEW_STALE_ACTIVE_DAYS}
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${FACADE_HOST_PORT:-8000}:8000"
     shm_size: "1gb"
     volumes:
       - ./config/projects.json:/app/config/projects.json:ro
-      - ${HOME}/Vaults/personal:/vault/personal:ro
+      - ${PROJECT_VAULT_PATH:?PROJECT_VAULT_PATH must be set}:/vault/${PROJECT_FOLDER:?PROJECT_FOLDER must be set}:ro
       - ./vault-system:/vault/_system:ro
     restart: unless-stopped
 

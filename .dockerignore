@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+.cursor
+.idea
+.venv
+config/projects.json
+vault-root
+__pycache__
+*.py[cod]
+.mypy_cache
+.pytest_cache
+.ruff_cache
