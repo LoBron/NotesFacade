@@ -11,7 +11,12 @@ Obsidian. Фасад принимает непрозрачный `project_id`, �
 
 ## Быстрый запуск из чистого клона
 
-Поддерживаются Ubuntu, Debian и WSL2 на их основе.
+Поддерживаются:
+
+- Ubuntu и Debian;
+- WSL2 на их основе;
+- macOS на Intel и Apple silicon. Docker Desktop поддерживает текущую и две предыдущие
+  основные версии macOS; требуется не менее 4 ГБ RAM.
 
 ```bash
 git clone <URL_РЕПОЗИТОРИЯ> NotesFacade
@@ -25,11 +30,20 @@ cd NotesFacade
 make bootstrap
 ```
 
-Git нужен для клонирования. Скрипт проверяет Bash, `curl`, `sha256sum`, Docker Engine,
-Docker Compose v2 и доступ к daemon. Если Docker/Compose, `curl` или `coreutils`
-отсутствуют, скрипт сначала запрашивает подтверждение. Только после согласия он
-использует `sudo apt`: Docker устанавливается из официального репозитория Docker для
-текущей Ubuntu/Debian. При отказе системные пакеты не меняются.
+Git нужен для клонирования. Скрипт проверяет Bash, `curl`, SHA-256 utility, Docker
+Engine/Desktop, Docker Compose v2 и доступ к daemon.
+
+На Ubuntu/Debian и WSL2 после подтверждения используются `sudo apt` и официальный
+репозиторий Docker. На macOS после подтверждения используется Homebrew:
+
+- если Homebrew отсутствует, скрипт отдельно запрашивает разрешение на его установку;
+- Docker устанавливается как Docker Desktop через `brew install --cask docker`;
+- Docker Desktop запускается через Desktop CLI или `open -a Docker`;
+- для SHA-256 используется системный `shasum` либо `sha256sum`/`gsha256sum`.
+
+Первый запуск Docker Desktop может показать системное окно macOS или запрос принятия
+лицензионных условий. Завершите этот системный шаг; bootstrap продолжит ожидать
+готовности Docker. При отказе от установки системные пакеты не меняются.
 
 ### Вопросы bootstrap
 
@@ -44,9 +58,9 @@ Docker Compose v2 и доступ к daemon. Если Docker/Compose, `curl` и�
 6. подтверждение несекретного резюме перед созданием файлов, сменой владельца и
    запуском контейнеров.
 
-Slug должен соответствовать `[a-z0-9][a-z0-9_-]{0,62}`, путь должен быть абсолютным,
-UID/GID — неотрицательными числами, timezone — существовать в `/usr/share/zoneinfo`,
-пароль — содержать 8–128 символов.
+Slug должен соответствовать `[a-z0-9][a-z0-9_-]{0,62}`, путь должен быть абсолютным и
+не содержать компонент `..`, UID/GID — неотрицательными числами, timezone — существовать
+в `/usr/share/zoneinfo`, пароль — содержать 8–128 символов.
 
 Автоматически генерируются:
 
@@ -73,9 +87,10 @@ Bootstrap без открытия UI:
 - задаёт `trashOption: none` и создаёт актуальный object `core-plugins.json` с явными
   `"file-recovery": true` и `"sync": false`;
 - проверяет фактических владельцев внутри `vault-root` и выбранного project vault.
-  После общего подтверждения bootstrap исправляет через `chown` только записи с
-  несовпадающими PUID:PGID, не следует по symlink и не переходит на другие файловые
-  системы;
+  На Linux после общего подтверждения bootstrap исправляет через `chown` только записи
+  с несовпадающими PUID:PGID, не следует по symlink и не переходит на другие файловые
+  системы. На macOS ownership не переписывается: оба каталога должны быть доступны
+  текущему пользователю для записи;
 - через `/custom-cont-init.d/10-seed-vault.sh` добавляет `/vault` в глобальный реестр
   Obsidian до desktop startup. Другие существующие записи vault не удаляются;
 - включает community plugin через Electron DevTools, доступный только на
@@ -139,7 +154,8 @@ endpoint и команды управления. Пароль и API key пов�
   перезаписи, если существующий файл имеет другой формат или нарушает обязательные
   `file-recovery=true`/`sync=false`;
 - исправляет ownership только внутри `vault-root` и `PROJECT_VAULT_PATH`, если
-  фактический UID:GID отличается от выбранного PUID:PGID;
+  фактический UID:GID отличается от выбранного PUID:PGID (Linux); на macOS проверяет
+  доступность каталогов для записи;
 - повторно запускает проверки REST, health и MCP.
 
 Перед восстановлением запрашивается подтверждение. Если существующий `app.json` или
@@ -222,7 +238,8 @@ make check-runtime
 Bootstrap создаёт ровно один начальный проект. Для дополнительного проекта:
 
 1. создайте отдельный каталог на хосте и UUID (`make new-project` использует
-   `/proc/sys/kernel/random/uuid`, с fallback на системный `uuidgen`, без Python);
+   `/proc/sys/kernel/random/uuid` на Linux, с fallback на системный `uuidgen` на
+   Linux/macOS, без Python);
 2. добавьте запись `{id, name, folder}` в `config/projects.json`;
 3. добавьте одинаковый bind mount в оба сервиса `docker-compose.yml`: RW для Obsidian
    и RO для facade;
@@ -317,12 +334,36 @@ Hook сохраняет существующие vault entries и добавля
 
 ### Ошибки прав
 
+Linux:
+
 ```bash
 stat -c '%U:%G %a %n' vault-root "$PROJECT_VAULT_PATH"
 ```
 
-Исправление владельца является системным изменением. Выполняйте `chown` только после
-проверки правильности пути и UID/GID.
+macOS:
+
+```bash
+stat -f '%Su:%Sg %Lp %N' vault-root "$PROJECT_VAULT_PATH"
+```
+
+На Linux исправление владельца является системным изменением. Выполняйте `chown` только
+после проверки правильности пути и UID/GID. На macOS убедитесь, что выбранный vault
+доступен текущему пользователю и разрешён в **Docker Desktop → Settings → Resources →
+File sharing**. Каталоги внутри `$HOME` обычно доступны Docker Desktop по умолчанию.
+
+### Docker Desktop на macOS не готов
+
+Запустите приложение и дождитесь состояния **Engine running**:
+
+```bash
+open -a Docker
+docker info
+docker compose version
+```
+
+Если это первый запуск, завершите показанные macOS запросы прав и принятия лицензии,
+затем повторите `./scripts/bootstrap.sh`. Увеличить время ожидания можно через
+`BOOTSTRAP_TIMEOUT_SECONDS`.
 
 ## Резервное копирование и безопасность
 

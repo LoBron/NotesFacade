@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+readonly REPO_ROOT
 readonly ENV_FILE="${REPO_ROOT}/.env"
 readonly PROJECTS_FILE="${REPO_ROOT}/config/projects.json"
 readonly PLUGIN_VERSION="5.1.0"
@@ -13,6 +15,7 @@ readonly ACTIVATION_TIMEOUT_SECONDS="${OBSIDIAN_ACTIVATION_TIMEOUT_SECONDS:-${DE
 
 declare -a TEMP_PATHS=()
 CURRENT_STAGE="initialization"
+OS_FAMILY=""
 
 cleanup() {
     local path
@@ -52,30 +55,43 @@ confirm() {
 }
 
 require_supported_platform() {
-    [[ "${BASH_VERSINFO[0]}" -ge 4 ]] || die "Bash 4 or newer is required."
-    [[ "$(uname -s)" == "Linux" ]] || die "Only Ubuntu, Debian, and WSL2 based on them are supported."
-    [[ -r /etc/os-release ]] || die "Cannot identify Linux distribution (/etc/os-release is missing)."
+    [[ "${BASH_VERSINFO[0]}" -ge 3 ]] || die "Bash 3 or newer is required."
+    case "$(uname -s)" in
+        Darwin)
+            OS_FAMILY="macos"
+            ;;
+        Linux)
+            OS_FAMILY="linux"
+            [[ -r /etc/os-release ]] ||
+                die "Cannot identify Linux distribution (/etc/os-release is missing)."
 
-    # shellcheck disable=SC1091
-    source /etc/os-release
-    case "${ID:-}" in
-        ubuntu|debian)
-            OS_ID="${ID}"
-            OS_CODENAME="${VERSION_CODENAME:-}"
+            # shellcheck disable=SC1091
+            source /etc/os-release
+            case "${ID:-}" in
+                ubuntu|debian)
+                    OS_ID="${ID}"
+                    OS_CODENAME="${VERSION_CODENAME:-}"
+                    ;;
+                *)
+                    if [[ " ${ID_LIKE:-} " == *" ubuntu "* &&
+                        -n "${UBUNTU_CODENAME:-}" ]]; then
+                        OS_ID="ubuntu"
+                        OS_CODENAME="${UBUNTU_CODENAME}"
+                    elif [[ " ${ID_LIKE:-} " == *" debian "* ]]; then
+                        OS_ID="debian"
+                        OS_CODENAME="${DEBIAN_CODENAME:-${VERSION_CODENAME:-}}"
+                    else
+                        die "Unsupported Linux distribution '${ID:-unknown}'; expected Ubuntu or Debian (including WSL2)."
+                    fi
+                    ;;
+            esac
+            [[ -n "${OS_CODENAME}" ]] ||
+                die "VERSION_CODENAME is missing from /etc/os-release."
             ;;
         *)
-            if [[ " ${ID_LIKE:-} " == *" ubuntu "* && -n "${UBUNTU_CODENAME:-}" ]]; then
-                OS_ID="ubuntu"
-                OS_CODENAME="${UBUNTU_CODENAME}"
-            elif [[ " ${ID_LIKE:-} " == *" debian "* ]]; then
-                OS_ID="debian"
-                OS_CODENAME="${DEBIAN_CODENAME:-${VERSION_CODENAME:-}}"
-            else
-                die "Unsupported distribution '${ID:-unknown}'; expected Ubuntu or Debian (including WSL2)."
-            fi
+            die "Only macOS, Ubuntu, Debian, and WSL2 based on them are supported."
             ;;
     esac
-    [[ -n "${OS_CODENAME}" ]] || die "VERSION_CODENAME is missing from /etc/os-release."
 }
 
 as_root() {
@@ -90,29 +106,52 @@ as_root() {
 install_dependencies() {
     local need_docker=false
     local need_curl=false
-    local need_coreutils=false
+    local need_checksum=false
 
     command -v docker >/dev/null 2>&1 || need_docker=true
     docker compose version >/dev/null 2>&1 || need_docker=true
     command -v curl >/dev/null 2>&1 || need_curl=true
-    command -v sha256sum >/dev/null 2>&1 || need_coreutils=true
+    has_checksum_tool || need_checksum=true
 
-    if [[ "${need_docker}" == false && "${need_curl}" == false && "${need_coreutils}" == false ]]; then
+    if [[ "${need_docker}" == false && "${need_curl}" == false &&
+        "${need_checksum}" == false ]]; then
         return
     fi
 
     printf 'Missing dependencies:'
     [[ "${need_docker}" == true ]] && printf ' Docker Engine/Compose'
     [[ "${need_curl}" == true ]] && printf ' curl'
-    [[ "${need_coreutils}" == true ]] && printf ' coreutils'
+    [[ "${need_checksum}" == true ]] && printf ' SHA-256 utility'
     printf '\n'
-    confirm "Install missing system dependencies with apt" ||
+    confirm "Install missing system dependencies" ||
         die "Installation declined; no system packages were changed."
 
     CURRENT_STAGE="system dependency installation"
+    if [[ "${OS_FAMILY}" == "macos" ]]; then
+        if ! command -v brew >/dev/null 2>&1; then
+            [[ "${need_curl}" == false ]] ||
+                die "macOS curl is required to install Homebrew."
+            confirm "Homebrew is missing; install it from brew.sh" ||
+                die "Homebrew installation declined."
+            NONINTERACTIVE=1 /bin/bash -c \
+                "$(curl --fail --silent --show-error --location https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            if [[ -x /opt/homebrew/bin/brew ]]; then
+                eval "$(/opt/homebrew/bin/brew shellenv)"
+            elif [[ -x /usr/local/bin/brew ]]; then
+                eval "$(/usr/local/bin/brew shellenv)"
+            else
+                die "Homebrew was installed but cannot be found in a standard location."
+            fi
+        fi
+        [[ "${need_curl}" == false ]] || brew install curl
+        [[ "${need_checksum}" == false ]] || brew install coreutils
+        [[ "${need_docker}" == false ]] || brew install --cask docker
+        return
+    fi
+
     as_root apt-get update
     as_root apt-get install -y ca-certificates curl gnupg
-    [[ "${need_coreutils}" == true ]] && as_root apt-get install -y coreutils
+    [[ "${need_checksum}" == true ]] && as_root apt-get install -y coreutils
 
     if [[ "${need_docker}" == true ]]; then
         as_root install -m 0755 -d /etc/apt/keyrings
@@ -141,6 +180,22 @@ ensure_docker_access() {
         die "Docker Compose v2 is unavailable after dependency checks."
     if docker info >/dev/null 2>&1; then
         return
+    fi
+    if [[ "${OS_FAMILY}" == "macos" ]]; then
+        log "Starting Docker Desktop for macOS."
+        if docker desktop start >/dev/null 2>&1; then
+            :
+        elif command -v open >/dev/null 2>&1; then
+            open -a Docker
+        else
+            die "Docker Desktop is installed but cannot be started."
+        fi
+        local deadline=$((SECONDS + DEFAULT_TIMEOUT_SECONDS))
+        while ((SECONDS < deadline)); do
+            docker info >/dev/null 2>&1 && return
+            sleep 3
+        done
+        die "Docker Desktop did not become ready after ${DEFAULT_TIMEOUT_SECONDS}s. Complete its first-launch prompts and rerun bootstrap."
     fi
     if [[ "${EUID}" -ne 0 ]] && command -v sudo >/dev/null 2>&1 &&
         sudo docker info >/dev/null 2>&1; then
@@ -224,6 +279,35 @@ random_hex() {
     od -An -N "${bytes}" -tx1 /dev/urandom | tr -d ' \n'
 }
 
+generate_uuid() {
+    if [[ -r /proc/sys/kernel/random/uuid ]]; then
+        cat /proc/sys/kernel/random/uuid
+    elif command -v uuidgen >/dev/null 2>&1; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    else
+        die "Cannot generate UUID: /proc UUID source and uuidgen are unavailable."
+    fi
+}
+
+has_checksum_tool() {
+    command -v sha256sum >/dev/null 2>&1 ||
+        command -v gsha256sum >/dev/null 2>&1 ||
+        command -v shasum >/dev/null 2>&1
+}
+
+checksum_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "${file}" | awk '{print $1}'
+    elif command -v gsha256sum >/dev/null 2>&1; then
+        gsha256sum "${file}" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "${file}" | awk '{print $1}'
+    else
+        die "No SHA-256 utility is available."
+    fi
+}
+
 validate_slug() {
     [[ "$1" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]]
 }
@@ -233,7 +317,8 @@ validate_project_name() {
 }
 
 validate_vault_path() {
-    [[ "$1" == /* && "$1" != "/" && "$1" != *$'\n'* && "$1" != *$'\r'* ]]
+    [[ "$1" == /* && "$1" != "/" && "$1" != *$'\n'* && "$1" != *$'\r'* ]] &&
+        [[ "/$1/" != *"/../"* ]]
 }
 
 validate_numeric_id() {
@@ -291,7 +376,9 @@ prompt_new_configuration() {
     PROJECT_VAULT_PATH="${PROJECT_VAULT_PATH:-${default_vault_path}}"
     validate_vault_path "${PROJECT_VAULT_PATH}" ||
         die "Vault path must be an absolute non-root path."
-    PROJECT_VAULT_PATH="$(realpath -m -- "${PROJECT_VAULT_PATH}")"
+    while [[ "${PROJECT_VAULT_PATH}" != "/" && "${PROJECT_VAULT_PATH}" == */ ]]; do
+        PROJECT_VAULT_PATH="${PROJECT_VAULT_PATH%/}"
+    done
 
     read -r -p "Timezone [${TZ:-Europe/Moscow}]: " TZ
     TZ="${TZ:-Europe/Moscow}"
@@ -330,7 +417,7 @@ prompt_new_configuration() {
     validate_port "${OBSIDIAN_HTTP_HOST_PORT}" || die "OBSIDIAN_HTTP_HOST_PORT is invalid."
     validate_port "${OBSIDIAN_HTTPS_HOST_PORT}" || die "OBSIDIAN_HTTPS_HOST_PORT is invalid."
     validate_port "${FACADE_HOST_PORT}" || die "FACADE_HOST_PORT is invalid."
-    PROJECT_ID="$(cat /proc/sys/kernel/random/uuid)"
+    PROJECT_ID="$(generate_uuid)"
 
     printf '\nConfiguration summary (secrets hidden):\n'
     printf '  Project: %s (%s)\n' "${PROJECT_NAME}" "${PROJECT_FOLDER}"
@@ -420,7 +507,7 @@ ensure_project_registry() {
             die "The existing project_id is not a UUID."
         return
     fi
-    PROJECT_ID="$(cat /proc/sys/kernel/random/uuid)"
+    PROJECT_ID="$(generate_uuid)"
     atomic_write "${PROJECTS_FILE}" 600 <<EOF
 {
   "projects": [
@@ -466,14 +553,20 @@ ensure_core_plugins_config() {
     compact="$(tr -d '[:space:]' <"${file}")"
     [[ "${compact}" == \{*\} ]] ||
         die "Existing core-plugins.json is not a JSON object; preserved without overwrite."
-    grep -qE '"file-recovery"[[:space:]]*:[[:space:]]*true' "${file}" &&
-        grep -qE '"sync"[[:space:]]*:[[:space:]]*false' "${file}" ||
+    if ! grep -qE '"file-recovery"[[:space:]]*:[[:space:]]*true' "${file}" ||
+        ! grep -qE '"sync"[[:space:]]*:[[:space:]]*false' "${file}"; then
         die "Existing core-plugins.json must set file-recovery=true and sync=false; preserved without overwrite."
+    fi
 }
 
 path_needs_ownership_repair() {
     local path="$1"
     [[ -d "${path}" ]] || die "Required directory is unavailable: ${path}"
+    if [[ "${OS_FAMILY}" == "macos" ]]; then
+        [[ -w "${path}" ]] ||
+            die "Directory is not writable on macOS: ${path}"
+        return 1
+    fi
     [[ -n "$(find -P "${path}" -xdev \
         \( ! -uid "${PUID}" -o ! -gid "${PGID}" \) -print -quit)" ]]
 }
@@ -481,12 +574,7 @@ path_needs_ownership_repair() {
 repair_vault_ownership() {
     local path
     local needs_repair=false
-    local -a paths
-    if (($#)); then
-        paths=("$@")
-    else
-        paths=("${REPO_ROOT}/vault-root" "${PROJECT_VAULT_PATH}")
-    fi
+    local -a paths=("${REPO_ROOT}/vault-root" "${PROJECT_VAULT_PATH}")
 
     for path in "${paths[@]}"; do
         if path_needs_ownership_repair "${path}"; then
@@ -496,6 +584,8 @@ repair_vault_ownership() {
     done
     [[ "${needs_repair}" == true ]] || return 0
 
+    [[ "${OS_FAMILY}" == "linux" ]] ||
+        die "Automatic ownership repair is supported only on Linux."
     log "Repairing mismatched ownership inside vault-root and the selected project vault."
     for path in "${paths[@]}"; do
         as_root find -P "${path}" -xdev \
@@ -508,23 +598,31 @@ download_plugin_assets() {
     local plugin_dir="${REPO_ROOT}/vault-root/.obsidian/plugins/${PLUGIN_ID}"
     local asset expected destination temporary actual
     mkdir -p -- "${plugin_dir}"
-    declare -A hashes=(
-        [main.js]="c3bf3ef644c5ade946c4ab64821a5969a92124e00afb4dc9bac4034d482ce131"
-        [manifest.json]="6c0d8390e6aa3f3515c834e2b4174545cf0cd20c5dbb116216e5d36b72af8437"
-        [styles.css]="a8b5c52e4974bd356225a17d64e6ea25502206ad860641da260fdc14430426f8"
-    )
     for asset in main.js manifest.json styles.css; do
-        expected="${hashes[${asset}]}"
+        case "${asset}" in
+            main.js)
+                expected="c3bf3ef644c5ade946c4ab64821a5969a92124e00afb4dc9bac4034d482ce131"
+                ;;
+            manifest.json)
+                expected="6c0d8390e6aa3f3515c834e2b4174545cf0cd20c5dbb116216e5d36b72af8437"
+                ;;
+            styles.css)
+                expected="a8b5c52e4974bd356225a17d64e6ea25502206ad860641da260fdc14430426f8"
+                ;;
+            *)
+                die "Unexpected plugin asset: ${asset}"
+                ;;
+        esac
         destination="${plugin_dir}/${asset}"
         if [[ -f "${destination}" ]] &&
-            [[ "$(sha256sum "${destination}" | awk '{print $1}')" == "${expected}" ]]; then
+            [[ "$(checksum_file "${destination}")" == "${expected}" ]]; then
             continue
         fi
         temporary="$(mktemp "${plugin_dir}/.${asset}.XXXXXX")"
         TEMP_PATHS+=("${temporary}")
         curl --fail --silent --show-error --location --connect-timeout 10 --max-time 180 \
             --retry 3 --retry-delay 2 -o "${temporary}" "${PLUGIN_BASE_URL}/${asset}"
-        actual="$(sha256sum "${temporary}" | awk '{print $1}')"
+        actual="$(checksum_file "${temporary}")"
         [[ "${actual}" == "${expected}" ]] ||
             die "SHA-256 mismatch for Local REST API ${PLUGIN_VERSION} asset ${asset}."
         chmod 600 "${temporary}"
@@ -559,11 +657,12 @@ prepare_vault() {
 }
 EOF
     else
-        grep -qE '"enableInsecureServer"[[:space:]]*:[[:space:]]*true' "${data_file}" &&
-            grep -qE '"bindingHost"[[:space:]]*:[[:space:]]*"0\.0\.0\.0"' "${data_file}" &&
-            grep -qE '"insecurePort"[[:space:]]*:[[:space:]]*27123' "${data_file}" &&
-            grep -q '"apiKey"' "${data_file}" ||
+        if ! grep -qE '"enableInsecureServer"[[:space:]]*:[[:space:]]*true' "${data_file}" ||
+            ! grep -qE '"bindingHost"[[:space:]]*:[[:space:]]*"0\.0\.0\.0"' "${data_file}" ||
+            ! grep -qE '"insecurePort"[[:space:]]*:[[:space:]]*27123' "${data_file}" ||
+            ! grep -q '"apiKey"' "${data_file}"; then
             die "Existing plugin data.json is incompatible; preserved without exposing or overwriting it."
+        fi
     fi
     download_plugin_assets
 }
@@ -575,6 +674,7 @@ compose() {
 wait_for_obsidian_rest() {
     local deadline=$((SECONDS + DEFAULT_TIMEOUT_SECONDS))
     while ((SECONDS < deadline)); do
+        # shellcheck disable=SC2016  # CHECK_API_KEY expands inside the container.
         if compose exec -T -e CHECK_API_KEY="${OBSIDIAN_API_KEY}" obsidian sh -c \
             'curl --fail --silent --show-error --connect-timeout 2 --max-time 5 \
             -H "Authorization: Bearer ${CHECK_API_KEY}" http://127.0.0.1:27123/vault/ >/dev/null' \
@@ -672,7 +772,7 @@ check_only() {
     require_supported_platform
     command -v docker >/dev/null 2>&1 || die "Docker is required."
     command -v curl >/dev/null 2>&1 || die "curl is required."
-    command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required."
+    has_checksum_tool || die "A SHA-256 utility is required."
     ensure_docker_access
     [[ -f "${ENV_FILE}" ]] || die ".env is missing; run bootstrap first."
     load_env_file
