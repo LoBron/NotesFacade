@@ -27,6 +27,9 @@ services:
       - obsidian
     environment:
       - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - KASM_PASSWORD=${KASM_PASSWORD}
       - OBSIDIAN_API_KEY=${OBSIDIAN_API_KEY}
       - OBSIDIAN_API_URL=${OBSIDIAN_API_URL}
       - OBSIDIAN_CONNECT_TIMEOUT_SECONDS=${OBSIDIAN_CONNECT_TIMEOUT_SECONDS}

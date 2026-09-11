@@ -33,6 +33,7 @@ from notes_facade.obsidian.client import ObsidianRestApiHttpClient
 from notes_facade.obsidian.errors import ObsidianClientError, ObsidianNotFoundError
 from notes_facade.obsidian.models import (
     JsonValue,
+    PatchScopes,
     PatchTargetTypes,
     SearchJsonLogicRequest,
     SearchResultItem,
@@ -368,11 +369,18 @@ class NotesService:
         """Apply a constrained patch operation and update frontmatter.updated."""
         project = self._project_registry.resolve(project_id)
         scoped_path = scoped_vault_path(project_folder=project.folder, path=path)
+        if isinstance(operation, ReplaceBlockPatchOperation):
+            patch_body = await self._build_replace_block_patch_body(
+                scoped_path=scoped_path,
+                operation=operation,
+            )
+        else:
+            patch_body = self._build_patch_body(operation=operation)
 
         await self._obsidian_client.patch_note(
             VaultPatchRequest(
                 path=scoped_path,
-                body=self._build_patch_body(operation=operation),
+                body=patch_body,
             )
         )
 
@@ -465,7 +473,7 @@ class NotesService:
             )
 
         for hit in link_hits:
-            if hit.absolute_path == source_path:
+            if hit.absolute_path in {source_path, target_path}:
                 continue
             try:
                 await self._rewrite_note_links(
@@ -689,12 +697,14 @@ class NotesService:
             return VaultPatchBody(
                 targetType=PatchTargetTypes.FRONTMATTER,
                 operation=DELETE_OPERATION,
+                scope=PatchScopes.MARKER_AND_CONTENT,
                 target=operation.field,
             )
         if isinstance(operation, AppendUnderHeadingPatchOperation):
             return VaultPatchBody(
                 targetType=PatchTargetTypes.HEADING,
                 operation=APPEND_OPERATION,
+                scope=PatchScopes.CONTENT,
                 target=self._build_heading_target(heading=operation.heading),
                 content=operation.content,
             )
@@ -702,6 +712,7 @@ class NotesService:
             return VaultPatchBody(
                 targetType=PatchTargetTypes.HEADING,
                 operation=PREPEND_OPERATION,
+                scope=PatchScopes.CONTENT,
                 target=self._build_heading_target(heading=operation.heading),
                 content=operation.content,
             )
@@ -710,6 +721,7 @@ class NotesService:
             return VaultPatchBody(
                 targetType=PatchTargetTypes.BLOCK,
                 operation=REPLACE_OPERATION,
+                scope=PatchScopes.CONTENT,
                 target=operation.target,
                 content=operation.content,
             )
@@ -727,6 +739,35 @@ class NotesService:
         if operation.target.startswith("---\n"):
             raise InvalidPatchOperationError("Full-file replacement is forbidden")
 
+    async def _build_replace_block_patch_body(
+        self,
+        *,
+        scoped_path: str,
+        operation: ReplaceBlockPatchOperation,
+    ) -> VaultPatchBody:
+        self._validate_replace_block_operation(operation=operation)
+        note_response = await self._obsidian_client.get_note(
+            VaultPathRequest(path=scoped_path),
+        )
+        _, body = parse_note_document(note_response.content)
+        block = self._find_direct_body_block(body=body, target=operation.target)
+        if block is None:
+            raise InvalidPatchOperationError("replace_block target was not found")
+        section_body = self._extract_heading_section_body(
+            body=body,
+            heading_path=block.heading_path,
+        )
+        if section_body is None:
+            raise InvalidPatchOperationError("replace_block section was not found")
+        replaced_section = section_body.replace(block.content, operation.content, 1)
+        return VaultPatchBody(
+            targetType=PatchTargetTypes.HEADING,
+            operation=REPLACE_OPERATION,
+            scope=PatchScopes.CONTENT,
+            target=list(block.heading_path),
+            content=replaced_section,
+        )
+
     def _build_heading_target(self, *, heading: str | list[str]) -> list[str]:
         if isinstance(heading, list):
             return [item.strip() for item in heading if item.strip()]
@@ -734,6 +775,43 @@ class NotesService:
         if not heading_value:
             return []
         return [heading_value]
+
+    def _find_direct_body_block(
+        self,
+        *,
+        body: str,
+        target: str,
+    ) -> _DirectBodyBlock | None:
+        for block in self._extract_direct_body_blocks(body=body):
+            if block.content == target:
+                return block
+        return None
+
+    def _extract_heading_section_body(
+        self,
+        *,
+        body: str,
+        heading_path: tuple[str, ...],
+    ) -> str | None:
+        lines = body.splitlines()
+        section_start: int | None = None
+        target_level = len(heading_path)
+        path: list[str] = []
+        for index, line in enumerate(lines):
+            if not line.startswith("#"):
+                continue
+            level = len(line) - len(line.lstrip("#"))
+            heading_text = line[level:].strip()
+            path = path[: level - 1]
+            path.append(heading_text)
+            if tuple(path) == heading_path:
+                section_start = index + 1
+                continue
+            if section_start is not None and level <= target_level:
+                return "\n".join(lines[section_start:index]).rstrip()
+        if section_start is None:
+            return None
+        return "\n".join(lines[section_start:]).rstrip()
 
     def _validate_frontmatter_patch_value(self, *, field: str, value: JsonValue) -> JsonValue:
         normalized_field = field.strip().lower()

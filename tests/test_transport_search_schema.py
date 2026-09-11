@@ -33,7 +33,11 @@ async def test_search_simple_uses_query_params_and_parses_results():
                             "matches": [
                                 {
                                     "context": "prefix match suffix",
-                                    "match": {"start": 7, "end": 12},
+                                    "match": {
+                                        "start": 7,
+                                        "end": 12,
+                                        "source": "content",
+                                    },
                                 }
                             ],
                         }
@@ -52,6 +56,7 @@ async def test_search_simple_uses_query_params_and_parses_results():
             assert item.matches[0].match is not None
             assert item.matches[0].match.start == 7
             assert item.matches[0].match.end == 12
+            assert item.matches[0].match.source == "content"
     finally:
         await client.close()
 

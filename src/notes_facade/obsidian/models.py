@@ -20,6 +20,15 @@ class PatchTargetTypes(StrEnum):
     BLOCK = "block"
 
 
+class PatchScopes(StrEnum):
+    """Supported PATCH scopes for note updates."""
+
+    CONTENT = "content"
+    MARKER = "marker"
+    MARKER_AND_CONTENT = "markerAndContent"
+    PARENT = "parent"
+
+
 class VaultPathRequest(BaseModel):
     """Request model for endpoints that require a vault path."""
 
@@ -38,6 +47,7 @@ class VaultPatchBody(BaseModel):
     """PATCH body passed to /vault/{path}."""
 
     target_type: PatchTargetTypes = Field(alias="targetType")
+    scope: PatchScopes = PatchScopes.CONTENT
     operation: NonEmptyString
     target: str | list[str] | None = None
     within: int | None = Field(default=None, ge=0)
@@ -94,6 +104,7 @@ class SearchMatchRange(BaseModel):
 
     start: int = Field(ge=0)
     end: int = Field(ge=0)
+    source: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 

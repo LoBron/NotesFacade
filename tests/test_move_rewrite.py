@@ -112,6 +112,101 @@ async def test_move_note_rewrites_plain_and_aliased_links_in_order():
 
 
 @pytest.mark.asyncio
+async def test_move_note_skips_self_link_and_rewrites_other_notes():
+    source_path = "personal/10 Notes/Old.md"
+    target_path = "personal/90 Archive/New.md"
+    self_path = target_path
+    first_ref_path = "personal/10 Notes/Refs-A.md"
+    second_ref_path = "personal/10 Notes/Refs-B.md"
+    notes: dict[str, str] = {
+        source_path: (
+            "---\n"
+            "id: s\n"
+            "type: thought\n"
+            "status: inbox\n"
+            "created: 2026-09-10\n"
+            "updated: 2026-09-10\n"
+            "tags: []\n"
+            "related: []\n"
+            "---\n"
+            "# Links\n"
+            "Keep [[Old]] and [[Old|alias]].\n"
+        ),
+        first_ref_path: (
+            "---\n"
+            "id: a\n"
+            "type: thought\n"
+            "status: inbox\n"
+            "created: 2026-09-10\n"
+            "updated: 2026-09-10\n"
+            "tags: []\n"
+            "related: []\n"
+            "---\n"
+            "# Links\n"
+            "First [[Old]] link.\n"
+        ),
+        second_ref_path: (
+            "---\n"
+            "id: b\n"
+            "type: thought\n"
+            "status: inbox\n"
+            "created: 2026-09-10\n"
+            "updated: 2026-09-10\n"
+            "tags: []\n"
+            "related: []\n"
+            "---\n"
+            "# Links\n"
+            "Second [[Old#Section|alias]] link.\n"
+        ),
+    }
+
+    class RecordingClient:
+        async def get_note(self, request):
+            return VaultNoteResponse(path=request.path, content=notes[request.path])
+
+        async def put_note(self, request):
+            notes[request.path] = request.content
+            return None
+
+        async def search_simple(self, request):
+            return SearchResponse(
+                results=[
+                    SearchResultItem(filename=f"/vault/{source_path}", score=0.9),
+                    SearchResultItem(filename=f"/vault/{self_path}", score=0.85),
+                    SearchResultItem(filename=f"/vault/{first_ref_path}", score=0.8),
+                    SearchResultItem(filename=f"/vault/{second_ref_path}", score=0.75),
+                ]
+            )
+
+        async def patch_note(self, request):
+            notes[request.path] = request.body.content or ""
+            return None
+
+        async def delete_note(self, request):
+            notes.pop(request.path, None)
+            return None
+
+    service = _build_service(obsidian_client=RecordingClient())
+
+    result = await service.move_note(
+        project_id="project-1",
+        path="10 Notes/Old.md",
+        new_path="90 Archive/New.md",
+    )
+
+    assert result.success is True
+    assert {item.path for item in result.links_rewritten} == {
+        "10 Notes/Refs-A.md",
+        "10 Notes/Refs-B.md",
+    }
+    assert self_path in notes
+    assert "[[Old]]" in notes[self_path]
+    assert "[[New]]" in notes[first_ref_path]
+    assert "[[New#Section|alias]]" in notes[second_ref_path]
+    assert source_path not in notes
+
+
+@pytest.mark.asyncio
 async def test_move_note_returns_partial_report_on_rewrite_failure():
     source_path = "personal/10 Notes/Old.md"
     target_path = "personal/90 Archive/New.md"

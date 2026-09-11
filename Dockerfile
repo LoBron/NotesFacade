@@ -16,6 +16,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
+ENV PYTHONPATH=/app/src
+
 COPY pyproject.toml poetry.lock README.md ./
 RUN poetry install --only main --no-root
 
@@ -27,4 +29,4 @@ RUN groupadd --gid 10001 app \
 
 USER app
 
-CMD ["python", "src/notes_facade/main.py"]
+CMD ["python", "-m", "notes_facade.main"]
